@@ -1,12 +1,12 @@
 package io.wasmexample.controller;
 
-import java.util.Base64;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.hamcrest.CoreMatchers.is;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import io.quarkus.test.junit.QuarkusTest;
 import static io.restassured.RestAssured.given;
@@ -15,44 +15,61 @@ import jakarta.inject.Inject;
 
 @QuarkusTest
 public class WasmGatewayResourceTest {
-    private static final Logger LOG = LoggerFactory.getLogger(WasmGatewayResourceTest.class);
-
     @Inject
     WasmExecutorService executorService;
-    private static final String REAL_WASM_BINARY_BASE64 = 
-        "AGFzbQEAAAABBgFgAX8BfwMCAQAHCwEHcHJvY2VzcwAACgkBBwAgAEECbAs=";
 
     @BeforeEach
-    public void setupWasmModules() {
-        // Decodifica la stringa direttamente in byte binari grezzi (come se arrivassero dal DB)
-        byte[] wasmBinary = Base64.getDecoder().decode(REAL_WASM_BINARY_BASE64);
-        
-        // Carica il binario puro nel dizionario in memoria del servizio
-        executorService.uploadCustomerService("moltiplicatore", wasmBinary);
+    public void setupWasmModules() throws IOException {
+        byte[] multiplyWasmBinary = Files.readAllBytes(
+                Path.of("plugins", "target", "plugins.wasm"));
+        executorService.uploadCustomerService("json-multiply", multiplyWasmBinary);
     }
 
-
     @Test
-    public void testDynamicWasmServiceExecution() {
-        // Chiamiamo il gateway chiedendo di eseguire il servizio del cliente con valore = 21
-        // Il modulo WASM interno farà 21 * 2 = 42
+    public void testMultiplyMethodUsesFactorsFromJsonInput() {
         given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .queryParam("value", 21)
-            .get("/api/v1/promotion/moltiplicatore")
+            .post("/api/v1/promotion/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("service", is("moltiplicatore"))
-            .body("result", is(42));
+            .body("service", is("json-multiply"))
+            .body("method", is("multiply"))
+            .body("result.result", is(42));
+    }
+
+    @Test
+    public void testMultiplyUsesBothFactorsRegardlessOfFieldOrder() {
+        given()
+          .contentType("application/json")
+          .body("{\"factor2\":-3,\"factor1\":9}")
+          .when()
+            .post("/api/v1/promotion/json-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(-27));
+    }
+
+    @Test
+    public void testInputRequiresTwoIntegerFactors() {
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":\"7\"}")
+          .when()
+            .post("/api/v1/promotion/json-multiply/multiply")
+          .then()
+            .statusCode(400)
+            .body(is("L'input deve contenere solo i campi interi factor1 e factor2"));
     }
 
     @Test
     public void testMissingServiceReturns404() {
-        // Verifica che richiedendo un servizio non esistente risponda correttamente con un 404
         given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .queryParam("value", 10)
-            .get("/api/v1/promotion/promo-fantasma")
+            .post("/api/v1/promotion/promo-fantasma/multiply")
           .then()
             .statusCode(404)
             .body(is("Servizio cliente non trovato: promo-fantasma"));

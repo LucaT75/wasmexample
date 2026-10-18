@@ -21,5 +21,8 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Build
+      - name: Build TeaVM plugins
+        run: ./mvnw -f plugins/pom.xml package -B
+
+      - name: Build application
         run: ./mvnw verify -B

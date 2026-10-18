@@ -1,13 +1,13 @@
 package io.wasmexample.controller;
 
 import io.wasmexample.service.WasmExecutorService;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
@@ -19,19 +19,19 @@ public class WasmGatewayResource {
     @Inject
     WasmExecutorService executorService;
 
-    @GET
-    @Path("/{serviceName}")
+    @POST
+    @Path("/{serviceName}/{methodName}")
     public Response runClientService(
-            @PathParam("serviceName") String serviceName, 
-            @QueryParam("value") long value) {
+            @PathParam("serviceName") String serviceName,
+            @PathParam("methodName") String methodName,
+            JsonNode input) {
         try {
-            // Esegue il modulo WASM associato a quel "serviceName"
-            long output = executorService.executeCustomerCode(serviceName, value);
-            
-            // Ritorna il risultato elaborato dal modulo WASM del cliente
-            return Response.ok(new ExecutionResult(serviceName, output)).build();
-        } catch (IllegalArgumentException e) {
+            JsonNode output = executorService.executeCustomerCode(serviceName, methodName, input);
+            return Response.ok(new ExecutionResult(serviceName, methodName, output)).build();
+        } catch (WasmExecutorService.CustomerServiceNotFoundException e) {
             return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
+        } catch (IllegalArgumentException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
         } catch (Exception e) {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                     .entity("Errore durante l'esecuzione del codice client: " + e.getMessage()).build();
@@ -40,10 +40,12 @@ public class WasmGatewayResource {
 
     public static class ExecutionResult {
         public String service;
-        public long result;
+        public String method;
+        public JsonNode result;
 
-        public ExecutionResult(String service, long result) {
+        public ExecutionResult(String service, String method, JsonNode result) {
             this.service = service;
+            this.method = method;
             this.result = result;
         }
     }

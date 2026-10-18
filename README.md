@@ -14,6 +14,37 @@ You can run your application in dev mode that enables live coding using:
 
 > **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
 
+## Eseguire un metodo WASM con JSON
+
+Il gateway riceve il nome del servizio e il nome dell'export WASM da invocare,
+insieme a un body JSON:
+
+```shell
+curl -X POST http://localhost:8080/api/v1/promotion/json-multiply/multiply \
+  -H 'Content-Type: application/json' \
+  -d '{"factor1":6,"factor2":7}'
+```
+
+Il modulo deve esporre una funzione `alloc(i32) -> i32` che riserva memoria per
+l'input. Il metodo richiesto (in questo esempio `multiply`) riceve
+`(inputPointer: i32, inputLength: i32)` con il JSON codificato in UTF-8 e
+restituisce un `i64`: i 32 bit meno significativi contengono il puntatore
+dell'output e i 32 bit più significativi la sua lunghezza in byte. Anche
+l'output deve essere JSON valido codificato in UTF-8.
+
+Il contratto standard è un oggetto JSON con esattamente due campi interi,
+`factor1` e `factor2`, e un output JSON con il campo `result`, ad esempio
+`{"factor1":6,"factor2":7}` -> `{"result":42}`. Il modulo di esempio espone il metodo
+`multiply` e può essere compilato con TeaVM prima dei test:
+
+```shell
+./mvnw -f plugins/pom.xml package
+./mvnw test
+```
+
+Per creare altri plugin TeaVM guarda la cartella [plugins/](/workspaces/wasmexample/plugins/README.md).
+
+
 ## Packaging and running the application
 
 The application can be packaged using:
