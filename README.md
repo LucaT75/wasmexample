@@ -14,7 +14,21 @@ You can run your application in dev mode that enables live coding using:
 
 > **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
 
+In dev mode, Swagger UI is available at <http://localhost:8080/q/swagger-ui/>.
+The OpenAPI document is available at <http://localhost:8080/q/openapi>.
+
 ## Eseguire un metodo WASM con JSON
+
+Per caricare o aggiornare un modulo WASM, inviare i byte del file con il nome
+del servizio nell'URL:
+
+```shell
+curl -X POST http://localhost:8080/api/v1/promotion/json-multiply \
+  -H 'Content-Type: application/wasm' \
+  --data-binary @plugins/target/multiply.wasm
+```
+
+La risposta `204 No Content` conferma il caricamento.
 
 Il gateway riceve il nome del servizio e il nome dell'export WASM da invocare,
 insieme a un body JSON:

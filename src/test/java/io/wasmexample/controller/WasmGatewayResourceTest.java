@@ -27,6 +27,40 @@ public class WasmGatewayResourceTest {
     }
 
     @Test
+    public void testUploadWasmThroughRestEndpoint() throws IOException {
+        byte[] wasmBinary = Files.readAllBytes(Path.of("plugins", "target", "multiply.wasm"));
+
+        given()
+          .contentType("application/wasm")
+          .body(wasmBinary)
+          .when()
+            .post("/api/v1/promotion/uploaded-multiply")
+          .then()
+            .statusCode(204);
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/promotion/uploaded-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(42));
+    }
+
+    @Test
+    public void testUploadEmptyWasmReturnsBadRequest() {
+        given()
+          .contentType("application/wasm")
+          .body(new byte[0])
+          .when()
+            .post("/api/v1/promotion/empty-service")
+          .then()
+            .statusCode(400)
+            .body(is("Il file WASM non può essere vuoto"));
+    }
+
+    @Test
     public void testMultiplyMethodUsesFactorsFromJsonInput() {
         given()
           .contentType("application/json")
