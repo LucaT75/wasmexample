@@ -19,11 +19,11 @@ public class WasmGatewayResourceTest {
     WasmExecutorService executorService;
 
     @BeforeEach
-    public void setupWasmModules() throws IOException {
+    public void setupWasmPlugins() throws IOException {
         byte[] multiplyWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "multiply.wasm"));
-        executorService.uploadCustomerService("json-multiply", multiplyWasmBinary);
+        executorService.uploadPlugin("json-multiply", multiplyWasmBinary);
         byte[] sumWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "sum.wasm"));
-        executorService.uploadCustomerService("json-sum", sumWasmBinary);
+        executorService.uploadPlugin("json-sum", sumWasmBinary);
     }
 
     @Test
@@ -34,7 +34,7 @@ public class WasmGatewayResourceTest {
           .contentType("application/wasm")
           .body(wasmBinary)
           .when()
-            .post("/api/v1/promotion/uploaded-multiply")
+            .post("/api/v1/plugin/uploaded-multiply")
           .then()
             .statusCode(204);
 
@@ -42,7 +42,7 @@ public class WasmGatewayResourceTest {
           .contentType("application/json")
           .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .post("/api/v1/promotion/uploaded-multiply/multiply")
+            .post("/api/v1/plugin/uploaded-multiply/multiply")
           .then()
             .statusCode(200)
             .body("result.result", is(42));
@@ -54,10 +54,10 @@ public class WasmGatewayResourceTest {
           .contentType("application/wasm")
           .body(new byte[0])
           .when()
-            .post("/api/v1/promotion/empty-service")
+            .post("/api/v1/plugin/empty-plugin")
           .then()
             .statusCode(400)
-            .body(is("Il file WASM non può essere vuoto"));
+            .body(is("Il file del plugin WASM non può essere vuoto"));
     }
 
     @Test
@@ -66,10 +66,10 @@ public class WasmGatewayResourceTest {
           .contentType("application/json")
           .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .post("/api/v1/promotion/json-multiply/multiply")
+            .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("service", is("json-multiply"))
+            .body("plugin", is("json-multiply"))
             .body("method", is("multiply"))
             .body("result.result", is(42));
     }
@@ -80,7 +80,7 @@ public class WasmGatewayResourceTest {
           .contentType("application/json")
           .body("{\"factor2\":-3,\"factor1\":9}")
           .when()
-            .post("/api/v1/promotion/json-multiply/multiply")
+            .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
             .body("result.result", is(-27));
@@ -92,10 +92,10 @@ public class WasmGatewayResourceTest {
           .contentType("application/json")
           .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .post("/api/v1/promotion/json-sum/sum")
+            .post("/api/v1/plugin/json-sum/sum")
           .then()
             .statusCode(200)
-            .body("service", is("json-sum"))
+            .body("plugin", is("json-sum"))
             .body("method", is("sum"))
             .body("result.result", is(13));
     }
@@ -106,21 +106,21 @@ public class WasmGatewayResourceTest {
           .contentType("application/json")
           .body("{\"factor1\":6,\"factor2\":\"7\"}")
           .when()
-            .post("/api/v1/promotion/json-multiply/multiply")
+            .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(400)
             .body(is("L'input deve contenere solo i campi interi factor1 e factor2"));
     }
 
     @Test
-    public void testMissingServiceReturns404() {
+    public void testMissingPluginReturns404() {
         given()
           .contentType("application/json")
           .body("{\"factor1\":6,\"factor2\":7}")
           .when()
-            .post("/api/v1/promotion/promo-fantasma/multiply")
+            .post("/api/v1/plugin/promo-fantasma/multiply")
           .then()
             .statusCode(404)
-            .body(is("Servizio cliente non trovato: promo-fantasma"));
+            .body(is("Plugin non trovato: promo-fantasma"));
     }
 }

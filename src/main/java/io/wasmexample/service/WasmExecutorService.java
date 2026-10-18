@@ -18,8 +18,8 @@ import com.dylibso.chicory.wasm.Parser;
 import com.dylibso.chicory.wasm.WasmModule;
 import com.dylibso.chicory.wasm.types.ValType;
 
-import io.wasmexample.repository.CustomerServiceEntity;
-import io.wasmexample.repository.CustomerServiceRepository;
+import io.wasmexample.repository.PluginEntity;
+import io.wasmexample.repository.PluginRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -28,32 +28,30 @@ public class WasmExecutorService {
     private static final Logger LOG = LoggerFactory.getLogger(WasmExecutorService.class);
 
     @Inject
-    CustomerServiceRepository repository;
+    PluginRepository repository;
 
     @Inject
     ObjectMapper objectMapper;
 
     private final ConcurrentHashMap<String, WasmModule> moduleCache = new ConcurrentHashMap<>();
 
-    // Metodo utility per simulare il caricamento (upload) del modulo del cliente
-    public void uploadCustomerService(String serviceName, byte[] wasmBinary) {         
-        moduleCache.remove(serviceName); // Invalida la cache se esisteva
-        repository.saveOrUpdate(serviceName, wasmBinary); // Salva o aggiorna il modulo nel DB
+    public void uploadPlugin(String pluginName, byte[] wasmBinary) {
+        moduleCache.remove(pluginName);
+        repository.saveOrUpdate(pluginName, wasmBinary);
     }
 
-    public JsonNode executeCustomerCode(String serviceName, String methodName, JsonNode input)
+    public JsonNode executePlugin(String pluginName, String methodName, JsonNode input)
             throws IOException {
-        WasmModule module = moduleCache.computeIfAbsent(serviceName, name -> {
-            CustomerServiceEntity entity = repository.find("serviceName", name).firstResult();
+        WasmModule module = moduleCache.computeIfAbsent(pluginName, name -> {
+            PluginEntity entity = repository.find("pluginName", name).firstResult();
             if (entity == null) {
-                throw new CustomerServiceNotFoundException(
-                        "Servizio cliente non trovato: " + name);
+                throw new PluginNotFoundException("Plugin non trovato: " + name);
             }
             try {
                 return Parser.parse(new ByteArrayInputStream(entity.wasmBinary));
             } catch (Exception e) {
-                LOG.error("Errore durante il parsing del modulo WASM per il servizio: " + name, e);
-                throw new IllegalStateException("Modulo WASM non valido per il servizio: " + name, e);
+                LOG.error("Errore durante il parsing del modulo WASM per il plugin: " + name, e);
+                throw new IllegalStateException("Modulo WASM non valido per il plugin: " + name, e);
             }
         });
 
@@ -142,13 +140,12 @@ public class WasmExecutorService {
         return (int) unsignedPointer;
     }
 
-    // Metodo da chiamare quando un cliente aggiorna il suo file .wasm per invalidare la cache
-    public void invalidateCache(String serviceName) {
-        moduleCache.remove(serviceName);
+    public void invalidatePluginCache(String pluginName) {
+        moduleCache.remove(pluginName);
     }
 
-    public static class CustomerServiceNotFoundException extends IllegalArgumentException {
-        public CustomerServiceNotFoundException(String message) {
+    public static class PluginNotFoundException extends IllegalArgumentException {
+        public PluginNotFoundException(String message) {
             super(message);
         }
     }

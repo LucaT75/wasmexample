@@ -18,7 +18,7 @@ import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 
-@Path("/api/v1/promotion")
+@Path("/api/v1/plugin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class WasmGatewayResource {
@@ -27,11 +27,11 @@ public class WasmGatewayResource {
     WasmExecutorService executorService;
 
     @POST
-    @Path("/{serviceName}")
+    @Path("/{pluginName}")
     @Consumes({MediaType.APPLICATION_OCTET_STREAM, "application/wasm"})
-    @Operation(summary = "Carica o aggiorna un servizio WASM")
+    @Operation(summary = "Upload or replace a WASM plugin")
     @RequestBody(
-            description = "Contenuto binario del modulo WebAssembly",
+            description = "Binary content of the WebAssembly module",
             required = true,
             content = {
                     @Content(mediaType = "application/wasm",
@@ -40,47 +40,54 @@ public class WasmGatewayResource {
                             schema = @Schema(type = SchemaType.STRING, format = "binary"))
             })
     @APIResponses({
-            @APIResponse(responseCode = "204", description = "Modulo caricato"),
-            @APIResponse(responseCode = "400", description = "Il file WASM è vuoto")
+            @APIResponse(responseCode = "204", description = "Plugin uploaded"),
+            @APIResponse(responseCode = "400", description = "The WASM file is empty")
     })
-    public Response uploadCustomerService(
-            @PathParam("serviceName") String serviceName,
+    public Response uploadPlugin(
+            @PathParam("pluginName") String pluginName,
             byte[] wasmBinary) {
         if (wasmBinary == null || wasmBinary.length == 0) {
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("Il file WASM non può essere vuoto").build();
+                    .entity("Il file del plugin WASM non può essere vuoto").build();
         }
 
-        executorService.uploadCustomerService(serviceName, wasmBinary);
+        executorService.uploadPlugin(pluginName, wasmBinary);
         return Response.noContent().build();
     }
 
     @POST
-    @Path("/{serviceName}/{methodName}")
-    public Response runClientService(
-            @PathParam("serviceName") String serviceName,
+    @Path("/{pluginName}/{methodName}")
+    @Operation(summary = "Execute a method exported by a WASM plugin")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Plugin method executed"),
+            @APIResponse(responseCode = "400", description = "Invalid input"),
+            @APIResponse(responseCode = "404", description = "Plugin not found"),
+            @APIResponse(responseCode = "500", description = "Plugin execution failed")
+    })
+    public Response executePlugin(
+            @PathParam("pluginName") String pluginName,
             @PathParam("methodName") String methodName,
             JsonNode input) {
         try {
-            JsonNode output = executorService.executeCustomerCode(serviceName, methodName, input);
-            return Response.ok(new ExecutionResult(serviceName, methodName, output)).build();
-        } catch (WasmExecutorService.CustomerServiceNotFoundException e) {
+            JsonNode output = executorService.executePlugin(pluginName, methodName, input);
+            return Response.ok(new ExecutionResult(pluginName, methodName, output)).build();
+        } catch (WasmExecutorService.PluginNotFoundException e) {
             return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
         } catch (IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
         } catch (Exception e) {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity("Errore durante l'esecuzione del codice client: " + e.getMessage()).build();
+                    .entity("Errore durante l'esecuzione del plugin: " + e.getMessage()).build();
         }
     }
 
     public static class ExecutionResult {
-        public String service;
+        public String plugin;
         public String method;
         public JsonNode result;
 
-        public ExecutionResult(String service, String method, JsonNode result) {
-            this.service = service;
+        public ExecutionResult(String plugin, String method, JsonNode result) {
+            this.plugin = plugin;
             this.method = method;
             this.result = result;
         }

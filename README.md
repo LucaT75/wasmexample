@@ -1,128 +1,117 @@
 # wasmexample
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+A Quarkus REST application that stores WebAssembly (WASM) plugins and executes
+their exported functions with Chicory.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+## Requirements
 
-## Running the application in dev mode
+- Java 21 or later
+- Maven (or use the included Maven wrapper)
 
-You can run your application in dev mode that enables live coding using:
+## Build the example plugins
 
-```shell script
+The `plugins` module uses TeaVM to compile the Java examples to WASM. Build it
+before running the application tests:
+
+```shell
+./mvnw -f plugins/pom.xml package
+```
+
+This generates `plugins/target/multiply.wasm` and `plugins/target/sum.wasm`.
+
+## Run in development mode
+
+```shell
 ./mvnw quarkus:dev
 ```
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+In dev mode, Swagger UI is available at
+<http://localhost:8080/q/swagger-ui/> and the OpenAPI document at
+<http://localhost:8080/q/openapi>. Quarkus Dev UI is available at
+<http://localhost:8080/q/dev/>.
 
-In dev mode, Swagger UI is available at <http://localhost:8080/q/swagger-ui/>.
-The OpenAPI document is available at <http://localhost:8080/q/openapi>.
+## Plugin API
 
-## Eseguire un metodo WASM con JSON
+### Upload or replace a plugin
 
-Per caricare o aggiornare un modulo WASM, inviare i byte del file con il nome
-del servizio nell'URL:
+Send the WASM binary as the request body. The plugin name is part of the URL:
 
 ```shell
-curl -X POST http://localhost:8080/api/v1/promotion/json-multiply \
+curl -X POST http://localhost:8080/api/v1/plugin/multiply \
   -H 'Content-Type: application/wasm' \
   --data-binary @plugins/target/multiply.wasm
 ```
 
-La risposta `204 No Content` conferma il caricamento.
+The endpoint also accepts `application/octet-stream`. A successful upload
+returns `204 No Content`; an empty file returns `400 Bad Request`.
 
-Il gateway riceve il nome del servizio e il nome dell'export WASM da invocare,
-insieme a un body JSON:
+### Execute an exported function
 
 ```shell
-curl -X POST http://localhost:8080/api/v1/promotion/json-multiply/multiply \
+curl -X POST http://localhost:8080/api/v1/plugin/multiply/multiply \
   -H 'Content-Type: application/json' \
   -d '{"factor1":6,"factor2":7}'
 ```
 
-Il modulo deve esporre una funzione `alloc(i32) -> i32` che riserva memoria per
-l'input. Il metodo richiesto (in questo esempio `multiply`) riceve
-`(inputPointer: i32, inputLength: i32)` con il JSON codificato in UTF-8 e
-restituisce un `i64`: i 32 bit meno significativi contengono il puntatore
-dell'output e i 32 bit più significativi la sua lunghezza in byte. Anche
-l'output deve essere JSON valido codificato in UTF-8.
+The example returns a JSON object containing the plugin name, method name, and
+plugin result:
 
-Il contratto standard è un oggetto JSON con esattamente due campi interi,
-`factor1` e `factor2`, e un output JSON con il campo `result`, ad esempio
-`{"factor1":6,"factor2":7}` -> `{"result":42}`. Ogni classe plugin produce un WASM
-distinto: `MultiplyPlugin` crea `multiply.wasm` e `SumPlugin` crea `sum.wasm`.
-Entrambi vengono compilati con TeaVM prima dei test:
+```json
+{
+  "plugin": "multiply",
+  "method": "multiply",
+  "result": {
+    "result": 42
+  }
+}
+```
+
+The current example plugins accept a JSON object containing exactly two
+integer fields, `factor1` and `factor2`. The `multiply` plugin multiplies them;
+the `sum` plugin adds them. Requests with invalid input return `400 Bad Request`
+and requests for unknown plugins return `404 Not Found`.
+
+## WASM plugin contract
+
+A plugin module must export:
+
+- `alloc(i32) -> i32`, which allocates memory for the input JSON.
+- The function to execute (for example, `multiply` or `sum`), with the
+  signature `(inputPointer: i32, inputLength: i32) -> i64`.
+
+The input is UTF-8 encoded JSON. The returned `i64` packs the output pointer in
+its lower 32 bits and the output length in its upper 32 bits. The referenced
+output bytes must contain valid UTF-8 JSON.
+
+See [plugins/README.md](plugins/README.md) for details on creating plugins with
+TeaVM.
+
+## Tests
+
+Build the example WASM modules, then run the application tests:
 
 ```shell
 ./mvnw -f plugins/pom.xml package
 ./mvnw test
 ```
 
-Per creare altri plugin TeaVM guarda la cartella [plugins/](/workspaces/wasmexample/plugins/README.md).
+## Package and run
 
+Build the application:
 
-## Packaging and running the application
-
-The application can be packaged using:
-
-```shell script
+```shell
 ./mvnw package
 ```
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
+Run the packaged application:
 
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
-
-If you want to build an _über-jar_, execute the following command:
-
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
+```shell
+java -jar target/quarkus-app/quarkus-run.jar
 ```
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+The default configuration uses an in-memory H2 database and recreates its
+schema at startup. It is intended for development and examples, not persistent
+production storage.
 
-## Creating a native executable
-
-You can create a native executable using:
-
-```shell script
-./mvnw package -Dnative
-```
-
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using:
-
-```shell script
-./mvnw package -Dnative -Dquarkus.native.container-build=true
-```
-
-You can then execute your native executable with: `./target/wasmexample-1.0.0-SNAPSHOT-runner`
-
-If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
-
-## Related Guides
-
-- REST ([guide](https://quarkus.io/guides/rest)): Build RESTful web services and APIs using Jakarta REST (formerly JAX-RS)
-- Chicory ([guide](https://docs.quarkiverse.io/chicory/dev/)): A Quarkus extension for Chicory, that takes care of the plumbing behind the scenes so developers can just 
-focus on their applications.
-
-- REST Jackson ([guide](https://quarkus.io/guides/rest#json-serialisation)): Jackson serialization support for Quarkus REST. This extension is not compatible with the quarkus-resteasy extension, or any of the extensions that depend on it
-- Hibernate ORM with Panache ([guide](https://quarkus.io/guides/hibernate-orm-panache)): Simplified JPA/Hibernate data access layer with active record and repository patterns
-- JDBC Driver - PostgreSQL ([guide](https://quarkus.io/guides/datasource)): Connect to the PostgreSQL database via JDBC
-
-## Provided Code
-
-### Hibernate ORM
-
-Create your first JPA entity
-
-[Related guide section...](https://quarkus.io/guides/hibernate-orm)
-
-
-[Related Hibernate with Panache section...](https://quarkus.io/guides/hibernate-orm-panache)
-
-
-### REST
-
-Easily start your REST Web Services
-
-[Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)
+For information about native builds, see the
+[Quarkus Maven tooling guide](https://quarkus.io/guides/maven-tooling).

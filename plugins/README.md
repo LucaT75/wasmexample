@@ -1,46 +1,77 @@
-# plugins/
+# WASM plugins
 
-Questo modulo è uno scaffolding per compilare plugin Java in WebAssembly con TeaVM.
+This Maven module contains Java examples that TeaVM compiles to WebAssembly.
+Each configured TeaVM execution produces a separate `.wasm` module and its
+JavaScript runtime companion.
 
-Obiettivo
-- Avere una cartella `plugins/` dove aggiungere servizi (plugin) in Java
-- Con `mvn -f plugins/pom.xml package` viene generato un WASM distinto per ogni plugin configurato
-- Il POM attuale genera `plugins/target/multiply.wasm` e `plugins/target/sum.wasm`
-- TeaVM genera anche un companion JavaScript per ciascun WASM
+## Build
 
-Struttura
-- plugins/
-  - pom.xml  (configurazione TeaVM)
-  - src/main/java/... (un plugin Java per modulo WASM)
+From the repository root, run:
 
-Esempio rapido
-1. Aprire la cartella `plugins/` come progetto Maven.
-2. Implementare un plugin Java (vedi `MultiplyPlugin.java` di esempio).
-3. Eseguire:
-   mvn -f plugins/pom.xml package
-4. I WebAssembly risultanti si troveranno in `plugins/target/`, uno per ciascuna
-   esecuzione TeaVM dichiarata nel POM.
+```shell
+./mvnw -f plugins/pom.xml package
+```
 
-Interfaccia (requisiti gateway)
-Il gateway esistente in questo repository si aspetta che il modulo WASM esponga almeno:
-- una funzione `alloc(i32) -> i32` che alloca memoria per l'input
-- una funzione pubblica (es: `multiply`) che prende `(inputPointer: i32, inputLength: i32)` e restituisce un `i64` dove i 32 bit meno significativi sono il puntatore di output e i 32 bit più significativi la lunghezza
-- l'output deve essere un JSON UTF-8 valido
+The current build creates:
 
-Il plugin `MultiplyPlugin` riceve un oggetto JSON con due fattori interi, ad esempio
-`{"factor1":6,"factor2":7}`, e restituisce `{"result":42}`. Il metodo `multiply`
-impacchetta puntatore e lunghezza dell'output nel valore `i64` richiesto dal gateway.
+- `plugins/target/multiply.wasm`
+- `plugins/target/sum.wasm`
 
-Il test d'integrazione carica entrambi i WASM generati da TeaVM. Per eseguirli,
-compila prima il modulo `plugins`:
+## Create a plugin
+
+Add a Java class under `src/main/java` and configure a TeaVM execution for its
+main class in `pom.xml`. The `MultiplyPlugin` and `SumPlugin` classes are
+working examples.
+
+## Gateway contract
+
+The gateway expects a WASM module to export:
+
+- `alloc(i32) -> i32` to allocate memory for the input.
+- A public function such as `multiply` that accepts
+  `(inputPointer: i32, inputLength: i32)` and returns an `i64`.
+
+The lower 32 bits of the returned value contain the output pointer; the upper
+32 bits contain the output length. Input and output are UTF-8 encoded JSON, and
+the output must be valid JSON.
+
+The example plugins accept an object with exactly two integer fields,
+`factor1` and `factor2`, and return an object with a `result` field. For
+example, `{"factor1":6,"factor2":7}` produces `{"result":42}` in
+`MultiplyPlugin`.
+
+## Upload and execute a plugin
+
+After building the WASM module and starting the application, upload it using
+the plugin API:
+
+```shell
+curl -X POST http://localhost:8080/api/v1/plugin/multiply \
+  -H 'Content-Type: application/wasm' \
+  --data-binary @plugins/target/multiply.wasm
+```
+
+Then call an exported function:
+
+```shell
+curl -X POST http://localhost:8080/api/v1/plugin/multiply/multiply \
+  -H 'Content-Type: application/json' \
+  -d '{"factor1":6,"factor2":7}'
+```
+
+## Tests
+
+The application integration tests load both example modules from
+`plugins/target/`. Build the modules before running the tests:
 
 ```shell
 ./mvnw -f plugins/pom.xml package
 ./mvnw test
 ```
 
-Esempio d'uso con il gateway
-- Dopo la compilazione copia il file `.wasm` nel posto dove vuoi conservarlo (o caricalo tramite l'API del gateway di questo progetto usando il servizio `uploadCustomerService`).
+## Security
 
-Sicurezza
-Non compilare codice non attendibile sul server di produzione. Per lo sviluppo locale è sensato compilare i plugin sul proprio PC e caricare il wasm risultante al gateway.
+Do not compile untrusted code on a production server. Build plugins in a
+controlled environment and upload only trusted WASM modules. Use appropriate
+authentication and authorization when exposing the upload endpoint beyond
+local development.
