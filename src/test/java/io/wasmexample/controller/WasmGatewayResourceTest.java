@@ -20,9 +20,10 @@ public class WasmGatewayResourceTest {
 
     @BeforeEach
     public void setupWasmModules() throws IOException {
-        byte[] multiplyWasmBinary = Files.readAllBytes(
-                Path.of("plugins", "target", "plugins.wasm"));
+        byte[] multiplyWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "multiply.wasm"));
         executorService.uploadCustomerService("json-multiply", multiplyWasmBinary);
+        byte[] sumWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "sum.wasm"));
+        executorService.uploadCustomerService("json-sum", sumWasmBinary);
     }
 
     @Test
@@ -49,6 +50,20 @@ public class WasmGatewayResourceTest {
           .then()
             .statusCode(200)
             .body("result.result", is(-27));
+    }
+
+    @Test
+    public void testSumMethodUsesBothFactors() {
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/promotion/json-sum/sum")
+          .then()
+            .statusCode(200)
+            .body("service", is("json-sum"))
+            .body("method", is("sum"))
+            .body("result.result", is(13));
     }
 
     @Test

@@ -34,8 +34,9 @@ l'output deve essere JSON valido codificato in UTF-8.
 
 Il contratto standard è un oggetto JSON con esattamente due campi interi,
 `factor1` e `factor2`, e un output JSON con il campo `result`, ad esempio
-`{"factor1":6,"factor2":7}` -> `{"result":42}`. Il modulo di esempio espone il metodo
-`multiply` e può essere compilato con TeaVM prima dei test:
+`{"factor1":6,"factor2":7}` -> `{"result":42}`. Ogni classe plugin produce un WASM
+distinto: `MultiplyPlugin` crea `multiply.wasm` e `SumPlugin` crea `sum.wasm`.
+Entrambi vengono compilati con TeaVM prima dei test:
 
 ```shell
 ./mvnw -f plugins/pom.xml package

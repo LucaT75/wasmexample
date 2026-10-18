@@ -41,7 +41,7 @@
                 <version>${teavm.version}</version>
                 <executions>
                     <execution>
-                        <id>compile-wasm</id>
+                        <id>compile-multiply-wasm</id>
                         <goals>
                             <goal>compile</goal>
                         </goals>
@@ -50,7 +50,20 @@
                             <mainClass>io.wasmexample.plugin.MultiplyPlugin</mainClass>
                             <targetType>WEBASSEMBLY</targetType>
                             <targetDirectory>${project.build.directory}</targetDirectory>
-                            <targetFileName>${project.artifactId}.wasm</targetFileName>
+                            <targetFileName>multiply.wasm</targetFileName>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>compile-sum-wasm</id>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <phase>package</phase>
+                        <configuration>
+                            <mainClass>io.wasmexample.plugin.SumPlugin</mainClass>
+                            <targetType>WEBASSEMBLY</targetType>
+                            <targetDirectory>${project.build.directory}</targetDirectory>
+                            <targetFileName>sum.wasm</targetFileName>
                         </configuration>
                     </execution>
                 </executions>
