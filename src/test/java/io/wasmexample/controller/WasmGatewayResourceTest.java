@@ -18,19 +18,20 @@ public class WasmGatewayResourceTest {
 
     @BeforeEach
     public void setupWasmPlugins() throws IOException {
-      byte[] multiplyWasmBinary = loadWasmResource("multiply.wasm");
+        byte[] multiplyWasmBinary = loadWasmResource("multiply.wasm");
         executorService.uploadPlugin("json-multiply", multiplyWasmBinary);
-      byte[] sumWasmBinary = loadWasmResource("sum.wasm");
+        byte[] sumWasmBinary = loadWasmResource("sum.wasm");
         executorService.uploadPlugin("json-sum", sumWasmBinary);
+        executorService.uploadPlugin("json-diff", loadWasmResource("diff.wasm"));
     }
 
     private byte[] loadWasmResource(String name) throws IOException {
-      try (var resource = getClass().getResourceAsStream("/wasm/" + name)) {
-        if (resource == null) {
-          throw new IOException("Risorsa WASM non trovata: " + name);
+        try (var resource = getClass().getResourceAsStream("/wasm/" + name)) {
+            if (resource == null) {
+                throw new IOException("Risorsa WASM non trovata: " + name);
+            }
+            return resource.readAllBytes();
         }
-        return resource.readAllBytes();
-      }
     }
 
     @Test
@@ -117,6 +118,28 @@ public class WasmGatewayResourceTest {
             .body("plugin", is("json-sum"))
             .body("method", is("sum"))
             .body("result.result", is(13));
+    }
+
+    @Test
+    public void testDiffMethodSubtractsSecondFactorFromFirst() {
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":19,\"factor2\":7}")
+          .when()
+            .post("/api/v1/plugin/json-diff/diff")
+          .then()
+            .statusCode(200)
+            .body("plugin", is("json-diff"))
+            .body("result.result", is(12));
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":7,\"factor2\":19}")
+          .when()
+            .post("/api/v1/plugin/json-diff/diff")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(-12));
     }
 
     @Test

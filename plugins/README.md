@@ -61,11 +61,12 @@ curl -X POST http://localhost:8080/api/v1/plugin/multiply/multiply \
 
 ## Tests
 
-The application integration tests load both example modules from
-`plugins/target/`. Build the modules before running the tests:
+The application tests load the `multiply`, `sum`, and `diff` modules from
+`src/test/resources/wasm/`; they do not depend on TeaVM build output. The
+standalone `diff.wasm` fixture is assembled from `diff.wat` without TeaVM. Run
+the tests from the repository root:
 
 ```shell
-./mvnw -f plugins/pom.xml package
 ./mvnw test
 ```
 

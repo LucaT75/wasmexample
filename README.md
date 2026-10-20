@@ -88,10 +88,11 @@ TeaVM.
 
 ## Tests
 
-Build the example WASM modules, then run the application tests:
+The gateway tests load their WASM fixtures from `src/test/resources/wasm/`.
+The `diff.wasm` fixture is assembled from `diff.wat` without TeaVM. Run the
+application tests with:
 
 ```shell
-./mvnw -f plugins/pom.xml package
 ./mvnw test
 ```
 
