@@ -1,8 +1,6 @@
 package io.wasmexample.controller;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.hamcrest.CoreMatchers.is;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,15 +18,24 @@ public class WasmGatewayResourceTest {
 
     @BeforeEach
     public void setupWasmPlugins() throws IOException {
-        byte[] multiplyWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "multiply.wasm"));
+      byte[] multiplyWasmBinary = loadWasmResource("multiply.wasm");
         executorService.uploadPlugin("json-multiply", multiplyWasmBinary);
-        byte[] sumWasmBinary = Files.readAllBytes(Path.of("plugins", "target", "sum.wasm"));
+      byte[] sumWasmBinary = loadWasmResource("sum.wasm");
         executorService.uploadPlugin("json-sum", sumWasmBinary);
+    }
+
+    private byte[] loadWasmResource(String name) throws IOException {
+      try (var resource = getClass().getResourceAsStream("/wasm/" + name)) {
+        if (resource == null) {
+          throw new IOException("Risorsa WASM non trovata: " + name);
+        }
+        return resource.readAllBytes();
+      }
     }
 
     @Test
     public void testUploadWasmThroughRestEndpoint() throws IOException {
-        byte[] wasmBinary = Files.readAllBytes(Path.of("plugins", "target", "multiply.wasm"));
+      byte[] wasmBinary = loadWasmResource("multiply.wasm");
 
         given()
           .contentType("application/wasm")
@@ -84,6 +91,18 @@ public class WasmGatewayResourceTest {
           .then()
             .statusCode(200)
             .body("result.result", is(-27));
+    }
+
+    @Test
+    public void testMultiplySupportsLargeLongResult() {
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":900000000,\"factor2\":900000000}")
+          .when()
+            .post("/api/v1/plugin/json-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(810000000000000000L));
     }
 
     @Test
