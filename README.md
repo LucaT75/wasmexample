@@ -10,14 +10,15 @@ their exported functions with Chicory.
 
 ## Build the example plugins
 
-The `plugins` module uses TeaVM to compile the Java examples to WASM. Build it
-before running the application tests:
+The examples are compiled from C to WASM with zero imports. Install Clang with
+the LLVM WASM linker (`wasm-ld`), then build the examples and test fixtures:
 
 ```shell
-./mvnw -f plugins/pom.xml package
+sh plugins/build.sh
 ```
 
-This generates `plugins/target/multiply.wasm` and `plugins/target/sum.wasm`.
+This generates `multiply.wasm`, `sum.wasm`, and `diff.wasm` under
+`plugins/target/` and updates the corresponding test fixtures.
 
 ## Run in development mode
 
@@ -34,7 +35,10 @@ In dev mode, Swagger UI is available at
 
 ### Upload or replace a plugin
 
-Send the WASM binary as the request body. The plugin name is part of the URL:
+Send the WASM binary as the request body. Uploads are parsed and validated
+before activation; accepted versions are retained by SHA-256 so a prior binary
+can be reactivated without replacing its stored bytes. The application has one
+supported plugin contract; no ABI/profile query parameter is needed:
 
 ```shell
 curl -X POST http://localhost:8080/api/v1/plugin/multiply \
@@ -43,7 +47,14 @@ curl -X POST http://localhost:8080/api/v1/plugin/multiply \
 ```
 
 The endpoint also accepts `application/octet-stream`. A successful upload
-returns `204 No Content`; an empty file returns `400 Bad Request`.
+returns `204 No Content`; invalid modules return `400 Bad Request`.
+
+To reactivate a previously uploaded binary, use its SHA-256:
+
+```shell
+curl -X POST \
+  'http://localhost:8080/api/v1/plugin/my-plugin/versions/<sha256>/activate'
+```
 
 ### Execute an exported function
 
@@ -66,12 +77,28 @@ plugin result:
 }
 ```
 
-The current example plugins accept a JSON object containing exactly two
-integer fields, `factor1` and `factor2`. The `multiply` plugin multiplies them;
-the `sum` plugin adds them. Requests with invalid input return `400 Bad Request`
-and requests for unknown plugins return `404 Not Found`.
+The current example plugins read integer `factor1` and `factor2` fields from
+the JSON input. The `multiply` plugin multiplies them; the `sum` plugin adds
+them. Requests for unknown plugins return `404 Not Found`.
 
 ## WASM plugin contract
+
+The application supports one versioned contract, ABI v1. Plugins must declare
+zero imports and export `memory`, `alloc(i32) -> i32`, and at least one entry
+point with signature `(i32, i32) -> i64`.
+
+The input bytes are a UTF-8 JSON envelope:
+
+```json
+{"abiVersion":1,"nowMillis":0,"input":{"factor1":6,"factor2":7}}
+```
+
+The output must be a JSON object with an `abiVersion` of `1` and either a
+`result` or an `error`; `logs` are optional and length- and count-limited.
+Input and output payloads are each limited to 1 MiB, execution runs in a
+bounded worker pool with a two-second timeout, and each request uses a fresh
+WASM instance. Timeout interruption is best-effort; a non-cooperative
+interpreter can continue occupying one of the bounded workers.
 
 A plugin module must export:
 
@@ -83,14 +110,13 @@ The input is UTF-8 encoded JSON. The returned `i64` packs the output pointer in
 its lower 32 bits and the output length in its upper 32 bits. The referenced
 output bytes must contain valid UTF-8 JSON.
 
-See [plugins/README.md](plugins/README.md) for details on creating plugins with
-TeaVM.
+See [plugins/README.md](plugins/README.md) for details on building zero-import
+examples with Clang.
 
 ## Tests
 
 The gateway tests load their WASM fixtures from `src/test/resources/wasm/`.
-The `diff.wasm` fixture is assembled from `diff.wat` without TeaVM. Run the
-application tests with:
+Run the application tests with:
 
 ```shell
 ./mvnw test
@@ -112,7 +138,9 @@ java -jar target/quarkus-app/quarkus-run.jar
 
 The default configuration uses an in-memory H2 database and recreates its
 schema at startup. It is intended for development and examples, not persistent
-production storage.
+production storage. The plugin version fields and composite uniqueness
+constraint require a database migration before using an existing persistent
+deployment; do not use `drop-and-create` in production.
 
 For information about native builds, see the
 [Quarkus Maven tooling guide](https://quarkus.io/guides/maven-tooling).

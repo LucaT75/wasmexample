@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import io.quarkus.test.junit.QuarkusTest;
 import static io.restassured.RestAssured.given;
 import io.wasmexample.service.WasmExecutorService;
+import io.wasmexample.service.WasmPluginValidator;
 import jakarta.inject.Inject;
 
 @QuarkusTest
@@ -66,6 +67,76 @@ public class WasmGatewayResourceTest {
           .then()
             .statusCode(400)
             .body(is("Il file del plugin WASM non può essere vuoto"));
+    }
+
+    @Test
+    public void testMalformedModuleIsRejectedWithoutDeactivatingCurrentPlugin() {
+        given()
+          .contentType("application/wasm")
+          .body("not a wasm module".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+          .when()
+            .post("/api/v1/plugin/json-multiply")
+          .then()
+            .statusCode(400);
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/plugin/json-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(42));
+    }
+
+    @Test
+    public void testZeroImportModuleExecutesVersionedJsonContract() throws IOException {
+        given()
+          .contentType("application/wasm")
+          .body(loadWasmResource("multiply.wasm"))
+          .when()
+            .post("/api/v1/plugin/uploaded-multiply")
+          .then()
+            .statusCode(204);
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/plugin/uploaded-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(42));
+    }
+
+    @Test
+    public void testStoredPluginVersionCanBeReactivated() throws IOException {
+        byte[] originalBinary = loadWasmResource("multiply.wasm");
+        byte[] replacementBinary = loadWasmResource("sum.wasm");
+
+        given()
+          .contentType("application/wasm")
+          .body(replacementBinary)
+          .when()
+            .post("/api/v1/plugin/json-multiply")
+          .then()
+            .statusCode(204);
+
+        given()
+          .when()
+            .post("/api/v1/plugin/json-multiply/versions/"
+                    + WasmPluginValidator.sha256Hex(originalBinary) + "/activate")
+          .then()
+            .statusCode(204);
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/plugin/json-multiply/multiply")
+          .then()
+            .statusCode(200)
+            .body("result.result", is(42));
     }
 
     @Test
@@ -140,18 +211,6 @@ public class WasmGatewayResourceTest {
           .then()
             .statusCode(200)
             .body("result.result", is(-12));
-    }
-
-    @Test
-    public void testInputRequiresTwoIntegerFactors() {
-        given()
-          .contentType("application/json")
-          .body("{\"factor1\":6,\"factor2\":\"7\"}")
-          .when()
-            .post("/api/v1/plugin/json-multiply/multiply")
-          .then()
-            .statusCode(400)
-            .body(is("L'input deve contenere solo i campi interi factor1 e factor2"));
     }
 
     @Test

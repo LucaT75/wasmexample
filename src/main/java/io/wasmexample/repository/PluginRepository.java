@@ -8,19 +8,35 @@ import jakarta.transaction.Transactional;
 public class PluginRepository implements PanacheRepository<PluginEntity> {
 
     @Transactional
-    public PluginEntity saveOrUpdate(String pluginName, byte[] wasmBinary) {
-        PluginEntity entity = find("pluginName", pluginName).firstResult();
+    public PluginEntity saveOrActivateVersion(String pluginName, byte[] wasmBinary,
+            String sha256, int abiVersion) {
+        update("active = false where pluginName = ?1 and active = true", pluginName);
 
+        PluginEntity entity = find("pluginName = ?1 and sha256 = ?2 and abiVersion = ?3",
+                pluginName, sha256, abiVersion).firstResult();
         if (entity == null) {
             entity = new PluginEntity();
             entity.pluginName = pluginName;
-            entity.wasmBinary = wasmBinary;
+            entity.sha256 = sha256;
+            entity.abiVersion = abiVersion;
+            entity.wasmBinary = wasmBinary.clone();
+            entity.active = true;
             persist(entity);
         } else {
-            // Hibernate manages the entity and persists the change when the transaction commits.
-            entity.wasmBinary = wasmBinary;
+            entity.active = true;
         }
-
         return entity;
+    }
+
+    @Transactional
+    public boolean activateVersion(String pluginName, String sha256, int abiVersion) {
+        PluginEntity version = find("pluginName = ?1 and sha256 = ?2 and abiVersion = ?3",
+                pluginName, sha256, abiVersion).firstResult();
+        if (version == null) {
+            return false;
+        }
+        update("active = false where pluginName = ?1 and active = true", pluginName);
+        version.active = true;
+        return true;
     }
 }

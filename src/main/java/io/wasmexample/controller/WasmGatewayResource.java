@@ -1,5 +1,6 @@
 package io.wasmexample.controller;
 
+import io.wasmexample.service.PluginExecutionException;
 import io.wasmexample.service.WasmExecutorService;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.inject.Inject;
@@ -41,7 +42,7 @@ public class WasmGatewayResource {
             })
     @APIResponses({
             @APIResponse(responseCode = "204", description = "Plugin uploaded"),
-            @APIResponse(responseCode = "400", description = "The WASM file is empty")
+            @APIResponse(responseCode = "400", description = "Empty or invalid WASM module")
     })
     public Response uploadPlugin(
             @PathParam("pluginName") String pluginName,
@@ -51,8 +52,33 @@ public class WasmGatewayResource {
                     .entity("Il file del plugin WASM non può essere vuoto").build();
         }
 
-        executorService.uploadPlugin(pluginName, wasmBinary);
-        return Response.noContent().build();
+        try {
+            executorService.uploadPlugin(pluginName, wasmBinary);
+            return Response.noContent().build();
+        } catch (IllegalArgumentException | PluginExecutionException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
+        }
+    }
+
+    @POST
+    @Path("/{pluginName}/versions/{sha256}/activate")
+    @Consumes(MediaType.WILDCARD)
+    @APIResponses({
+            @APIResponse(responseCode = "204", description = "Plugin version activated"),
+            @APIResponse(responseCode = "400", description = "Invalid hash"),
+            @APIResponse(responseCode = "404", description = "Plugin version not found")
+    })
+    public Response activatePluginVersion(
+            @PathParam("pluginName") String pluginName,
+            @PathParam("sha256") String sha256) {
+        try {
+            executorService.activatePluginVersion(pluginName, sha256);
+            return Response.noContent().build();
+        } catch (WasmExecutorService.PluginNotFoundException e) {
+            return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
+        } catch (IllegalArgumentException | PluginExecutionException e) {
+            return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
+        }
     }
 
     @POST
@@ -62,7 +88,9 @@ public class WasmGatewayResource {
             @APIResponse(responseCode = "200", description = "Plugin method executed"),
             @APIResponse(responseCode = "400", description = "Invalid input"),
             @APIResponse(responseCode = "404", description = "Plugin not found"),
-            @APIResponse(responseCode = "500", description = "Plugin execution failed")
+            @APIResponse(responseCode = "500", description = "Plugin execution failed"),
+            @APIResponse(responseCode = "503", description = "Plugin execution capacity unavailable"),
+            @APIResponse(responseCode = "504", description = "Plugin execution timed out")
     })
     public Response executePlugin(
             @PathParam("pluginName") String pluginName,
@@ -75,6 +103,15 @@ public class WasmGatewayResource {
             return Response.status(Response.Status.NOT_FOUND).entity(e.getMessage()).build();
         } catch (IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
+        } catch (PluginExecutionException e) {
+            int status = switch (e.kind()) {
+                case OVERLOADED, CIRCUIT_OPEN, INTERRUPTED -> 503;
+                case TIMEOUT -> 504;
+                case INVALID_INPUT, INPUT_TOO_LARGE, UNKNOWN_METHOD -> 400;
+                case INVALID_MODULE, UNSUPPORTED_ABI,
+                        OUTPUT_TOO_LARGE, CONTRACT_VIOLATION, TRAP, PLUGIN_ERROR -> 500;
+            };
+            return Response.status(status).entity(e.getMessage()).build();
         } catch (Exception e) {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                     .entity("Errore durante l'esecuzione del plugin: " + e.getMessage()).build();
