@@ -386,7 +386,7 @@ public class WasmExecutorService {
         void recordFailure() {
             if (failures.incrementAndGet() >= BREAKER_THRESHOLD) {
                 openUntil = System.currentTimeMillis() + BREAKER_COOLDOWN.toMillis();
-7                failures.set(BREAKER_THRESHOLD - 1);
+                failures.set(BREAKER_THRESHOLD - 1);
             }
         }
     }
