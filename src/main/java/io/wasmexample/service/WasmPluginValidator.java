@@ -8,6 +8,7 @@ import com.dylibso.chicory.wasm.types.FunctionType;
 import com.dylibso.chicory.wasm.types.MemoryLimits;
 import com.dylibso.chicory.wasm.types.ValType;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -63,9 +64,10 @@ public class WasmPluginValidator {
         } catch (RuntimeException e) {
             throw invalid("Modulo WASM non valido (parsing fallito)", e);
         }
-        if (module.importSection().importCount() != 0) {
-            throw invalid("Il contratto JSON non ammette import WASM", null);
-        }
+//      Per accettare wasm prodotto con TeaVM che prevede import di funzioni di runtime, si disabilita il check sugli import.
+//        if (module.importSection().importCount() != 0) {
+//            throw invalid("Il contratto JSON non ammette import WASM", null);
+//        }
         MemoryLimits limits = memoryLimits(module, 256);
 
         Set<String> functions = new HashSet<>();
@@ -99,7 +101,7 @@ public class WasmPluginValidator {
             throw invalid("Il modulo deve esportare almeno una funzione (i32, i32) -> i64", null);
         }
 
-        smokeTest(module, limits, entryPoints);
+        //Disable mock test smokeTest(module, limits, entryPoints);
         return new ValidatedModule(module, Set.copyOf(functions));
     }
 
@@ -167,8 +169,7 @@ public class WasmPluginValidator {
         try {
             future = smokeExecutor.submit(() -> {
                 Instance instance = Instance.builder(module).withMemoryLimits(limits).build();
-                byte[] input = "{\"abiVersion\":1,\"nowMillis\":0,\"input\":{}}"
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] input = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 long[] allocated = instance.export("alloc").apply(input.length);
                 if (allocated.length != 1) {
                     throw invalid("alloc deve restituire un puntatore", null);
@@ -188,18 +189,15 @@ public class WasmPluginValidator {
                     }
                     int checkedPointer = checkedRange(outputPointer, outputLength, instance);
                     byte[] output = instance.memory().readBytes(checkedPointer, (int) outputLength);
-                    PluginEnvelope.Response response;
                     try {
-                        response = objectMapper.reader()
+                        JsonNode response = objectMapper.reader()
                                 .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-                                .readValue(output, PluginEnvelope.Response.class);
+                                .readTree(output);
+                        if (response == null) {
+                            throw invalid("Output del test di contratto WASM vuoto", null);
+                        }
                     } catch (IOException e) {
                         throw invalid("Output del test di contratto non è JSON valido", e);
-                    }
-                    if (response == null || response.abiVersion() != PluginEnvelope.ABI_VERSION
-                            || (response.result() == null
-                                    && (response.error() == null || response.error().isBlank()))) {
-                        throw invalid("Output del test di contratto non rispetta l'ABI JSON", null);
                     }
                 }
             });

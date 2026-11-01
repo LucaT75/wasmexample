@@ -2,12 +2,15 @@ package io.wasmexample.controller;
 
 import java.io.IOException;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import io.quarkus.test.junit.QuarkusTest;
 import static io.restassured.RestAssured.given;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import io.wasmexample.service.WasmExecutorService;
 import io.wasmexample.service.WasmPluginValidator;
 import jakarta.inject.Inject;
@@ -54,7 +57,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/uploaded-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(42));
+            .body("result.result.result", is(42));
     }
 
     @Test
@@ -86,7 +89,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(42));
+            .body("result.result.result", is(42));
     }
 
     @Test
@@ -106,7 +109,70 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/uploaded-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(42));
+            .body("result.result.result", is(42));
+    }
+
+    @Test
+    public void testTeaVmPluginExecutesWithFreshInstancesAndCachedImports() {
+        executorService.uploadPlugin("teavm-sum", TeaVmFixture.binary("currentTimeMillis", false));
+
+        var input = JsonNodeFactory.instance.objectNode()
+                .put("factor1", 6).put("factor2", 7);
+        var directOutput = executorService.executePlugin("teavm-sum", "run", input);
+        assertEquals(1, directOutput.get("abiVersion").asInt());
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":9,\"factor2\":-3}")
+          .when()
+            .post("/api/v1/plugin/teavm-sum/run")
+          .then()
+            .statusCode(200)
+            .body("result.abiVersion", is(1));
+    }
+
+    @Test
+    public void testUnsupportedTeaVmImportReportsItsNameAtExecution() {
+        executorService.uploadPlugin("teavm-unsupported",
+                TeaVmFixture.binary("unknownTimeMillis", false));
+
+        given()
+          .contentType("application/json")
+          .body("{\"factor1\":6,\"factor2\":7}")
+          .when()
+            .post("/api/v1/plugin/teavm-unsupported/run")
+          .then()
+            .statusCode(500)
+            .body(containsString("Import WASM non supportato: teavm.unknownTimeMillis"));
+    }
+
+    @Test
+    public void testTeaVmImportWithWrongSignatureIsRejected() {
+        executorService.uploadPlugin("teavm-wrong-signature",
+                TeaVmFixture.binary("currentTimeMillis", false, true));
+
+        given()
+          .contentType("application/json")
+          .body("{}")
+          .when()
+            .post("/api/v1/plugin/teavm-wrong-signature/run")
+          .then()
+            .statusCode(500)
+            .body(containsString("Firma WASM non valida per l'import: teavm.currentTimeMillis"));
+    }
+
+    @Test
+    public void testTeaVmOutOfMemoryFailsExplicitly() {
+        executorService.uploadPlugin("teavm-oom", TeaVmFixture.binary("currentTimeMillis", true));
+
+        given()
+          .contentType("application/json")
+          .body("{}")
+          .when()
+            .post("/api/v1/plugin/teavm-oom/run")
+          .then()
+            .statusCode(500)
+            .body(containsString("Memoria esaurita nel runtime TeaVM"));
     }
 
     @Test
@@ -136,7 +202,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(42));
+            .body("result.result.result", is(42));
     }
 
     @Test
@@ -150,7 +216,7 @@ public class WasmGatewayResourceTest {
             .statusCode(200)
             .body("plugin", is("json-multiply"))
             .body("method", is("multiply"))
-            .body("result.result", is(42));
+            .body("result.result.result", is(42));
     }
 
     @Test
@@ -162,7 +228,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(-27));
+            .body("result.result.result", is(-27));
     }
 
     @Test
@@ -174,7 +240,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/json-multiply/multiply")
           .then()
             .statusCode(200)
-            .body("result.result", is(810000000000000000L));
+            .body("result.result.result", is(810000000000000000L));
     }
 
     @Test
@@ -188,7 +254,7 @@ public class WasmGatewayResourceTest {
             .statusCode(200)
             .body("plugin", is("json-sum"))
             .body("method", is("sum"))
-            .body("result.result", is(13));
+            .body("result.result.result", is(13));
     }
 
     @Test
@@ -201,7 +267,7 @@ public class WasmGatewayResourceTest {
           .then()
             .statusCode(200)
             .body("plugin", is("json-diff"))
-            .body("result.result", is(12));
+            .body("result.result.result", is(12));
 
         given()
           .contentType("application/json")
@@ -210,7 +276,7 @@ public class WasmGatewayResourceTest {
             .post("/api/v1/plugin/json-diff/diff")
           .then()
             .statusCode(200)
-            .body("result.result", is(-12));
+            .body("result.result.result", is(-12));
     }
 
     @Test

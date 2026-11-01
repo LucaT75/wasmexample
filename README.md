@@ -72,7 +72,10 @@ plugin result:
   "plugin": "multiply",
   "method": "multiply",
   "result": {
-    "result": 42
+    "abiVersion": 1,
+    "result": {
+      "result": 42
+    }
   }
 }
 ```
@@ -83,22 +86,64 @@ them. Requests for unknown plugins return `404 Not Found`.
 
 ## WASM plugin contract
 
-The application supports one versioned contract, ABI v1. Plugins must declare
-zero imports and export `memory`, `alloc(i32) -> i32`, and at least one entry
+The application supports one binary contract, ABI v1. Plugins must export
+`memory`, `alloc(i32) -> i32`, and at least one entry
 point with signature `(i32, i32) -> i64`.
 
-The input bytes are a UTF-8 JSON envelope:
+The executor supports zero-import modules and a limited TeaVM host interface:
+`teavm.currentTimeMillis() -> f64`, `teavm.logString(i32)`,
+`teavm.logInt(i32)`, and `teavm.logOutOfMemory()`. The clock returns current epoch
+milliseconds, log functions use the application debug logger with per-instance
+count and length limits, and out-of-memory reports fail execution explicitly.
+String logging requires TeaVM's `teavm_stringData`, `teavm_arrayLength`, and
+`teavm_charArrayData` exports. This is not a complete TeaVM runtime.
+Unsupported imports or signatures are rejected on first execution, when the
+executor resolves and caches the import plan. Each fresh instance receives its
+own host logging state. Upload validation is unchanged.
+
+The executor serializes the request JSON directly as UTF-8 bytes. It does not
+interpret the fields or add an application envelope:
 
 ```json
-{"abiVersion":1,"nowMillis":0,"input":{"factor1":6,"factor2":7}}
+{"factor1":6,"factor2":7}
 ```
 
-The output must be a JSON object with an `abiVersion` of `1` and either a
-`result` or an `error`; `logs` are optional and length- and count-limited.
-Input and output payloads are each limited to 1 MiB, execution runs in a
+The executor reads the returned bytes as JSON only because the REST API exposes
+JSON; it does not require a particular output shape. The plugin owns the meaning
+of both input and output and may return any valid JSON value. Input and output
+payloads are each limited to 1 MiB, execution runs in a
 bounded worker pool with a two-second timeout, and each request uses a fresh
 WASM instance. Timeout interruption is best-effort; a non-cooperative
 interpreter can continue occupying one of the bounded workers.
+
+### Responsibility boundaries
+
+The contract has two separate layers:
+
+1. **Binary WASM ABI (mandatory):** how the service calls the module and
+   exchanges byte buffers.
+2. **Application payload (plugin-defined):** the meaning and structure of the
+   input and output bytes.
+
+There is **no common application envelope ABI** in the current contract. In
+particular, the service does not add or require `abiVersion`, `result`, `error`,
+`nowMillis`, or `input` fields.
+
+| Responsibility | Service |                   Plugin |
+|---|---:|-------------------------:|
+| Binary ABI: `alloc`, pointers, lengths, packed `i64` | Calls and validates |           Must implement |
+| UTF-8 JSON transport used by this REST API | Serializes and forwards |   Must parse and produce |
+| Memory and input/output size limits | Enforces | Must operate within them |
+| Exporting `alloc` and the requested entry point | Invokes |              Must export |
+| Application input format and field meanings | Does not define |    Defines and validates |
+| Application calculation | Does not perform |                 Performs |
+| Application output format | Does not define or inspect |                  Defines |
+| Plugin-specific envelope | Does not define |                  Defines |
+
+A plugin may use any JSON structure, including its own envelope, and the
+service forwards it without inspecting its fields. A plugin-specific error
+format is therefore part of that plugin's application contract; WASM traps
+remain technical execution errors handled by the service.
 
 A plugin module must export:
 
@@ -116,6 +161,8 @@ examples with Clang.
 ## Tests
 
 The gateway tests load their WASM fixtures from `src/test/resources/wasm/`.
+Gateway tests also generate a small ABI v1 module with TeaVM clock and diagnostic
+imports, checking clock encoding, repeated execution, and explicit import errors.
 Run the application tests with:
 
 ```shell

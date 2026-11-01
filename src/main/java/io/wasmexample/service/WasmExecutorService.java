@@ -1,8 +1,14 @@
 package io.wasmexample.service;
 
+import com.dylibso.chicory.runtime.HostFunction;
+import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.runtime.Memory;
 import com.dylibso.chicory.wasm.WasmModule;
+import com.dylibso.chicory.wasm.types.FunctionImport;
+import com.dylibso.chicory.wasm.types.FunctionType;
+import com.dylibso.chicory.wasm.types.ValType;
+import com.dylibso.chicory.wasm.types.Value;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +22,9 @@ import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -48,6 +56,25 @@ public class WasmExecutorService {
     private record CacheKey(String pluginName, String sha256, int abiVersion) {
     }
 
+    private record ExecutableModule(
+            WasmPluginValidator.ValidatedModule validated, List<TeaVmFunction> imports) {
+    }
+
+    private enum TeaVmFunction {
+        CURRENT_TIME_MILLIS("currentTimeMillis", FunctionType.returning(ValType.F64)),
+        LOG_STRING("logString", FunctionType.accepting(ValType.I32)),
+        LOG_INT("logInt", FunctionType.accepting(ValType.I32)),
+        LOG_OUT_OF_MEMORY("logOutOfMemory", FunctionType.empty());
+
+        private final String importName;
+        private final FunctionType type;
+
+        TeaVmFunction(String importName, FunctionType type) {
+            this.importName = importName;
+            this.type = type;
+        }
+    }
+
     @Inject
     PluginRepository repository;
 
@@ -60,7 +87,7 @@ public class WasmExecutorService {
     @Inject
     MeterRegistry meterRegistry;
 
-    private final ConcurrentHashMap<CacheKey, WasmPluginValidator.ValidatedModule> moduleCache =
+    private final ConcurrentHashMap<CacheKey, ExecutableModule> moduleCache =
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<CacheKey, CircuitBreaker> breakers = new ConcurrentHashMap<>();
     private ThreadPoolExecutor executor;
@@ -126,8 +153,8 @@ public class WasmExecutorService {
                         "Plugin temporaneamente disabilitato per errori ripetuti");
             }
 
-            WasmPluginValidator.ValidatedModule validated = loadValidated(meta, key);
-            validator.validateEntryPoint(validated, methodName);
+            ExecutableModule executable = loadValidated(meta, key);
+            validator.validateEntryPoint(executable.validated(), methodName);
             methodTag = methodName;
 
             byte[] requestBytes = serializeRequest(input);
@@ -137,9 +164,9 @@ public class WasmExecutorService {
                         "Input oltre il limite di " + MAX_INPUT_BYTES + " byte");
             }
             byte[] outputBytes = executeIsolated(
-                    validated.module(), methodName, requestBytes, breaker);
+                    executable, methodName, requestBytes, breaker);
             outputSize = outputBytes.length;
-            JsonNode result = parseResponse(outputBytes, pluginName, breaker);
+            JsonNode result = parseResponse(outputBytes, breaker);
             breaker.recordSuccess();
             return result;
         } catch (PluginNotFoundException e) {
@@ -185,8 +212,8 @@ public class WasmExecutorService {
         evictPreviousVersions(pluginName, normalizedHash);
     }
 
-    private WasmPluginValidator.ValidatedModule loadValidated(PluginMeta meta, CacheKey key) {
-        WasmPluginValidator.ValidatedModule cached = moduleCache.get(key);
+    private ExecutableModule loadValidated(PluginMeta meta, CacheKey key) {
+        ExecutableModule cached = moduleCache.get(key);
         if (cached != null) {
             return cached;
         }
@@ -200,22 +227,91 @@ public class WasmExecutorService {
                     "Hash del binario non corrispondente ai metadati per " + meta.pluginName());
         }
         WasmPluginValidator.ValidatedModule validated = validator.validate(entity.wasmBinary);
-        WasmPluginValidator.ValidatedModule previous = moduleCache.putIfAbsent(key, validated);
-        return previous == null ? validated : previous;
+        ExecutableModule executable = new ExecutableModule(validated, resolveImports(validated.module()));
+        ExecutableModule previous = moduleCache.putIfAbsent(key, executable);
+        return previous == null ? executable : previous;
+    }
+
+    private static List<TeaVmFunction> resolveImports(WasmModule module) {
+        List<TeaVmFunction> functions = new ArrayList<>();
+        for (int i = 0; i < module.importSection().importCount(); i++) {
+            var imported = module.importSection().getImport(i);
+            String qualifiedName = imported.module() + "." + imported.name();
+            if (!(imported instanceof FunctionImport function) || !"teavm".equals(imported.module())) {
+                throw new PluginExecutionException(PluginExecutionException.Kind.INVALID_MODULE,
+                        "Import WASM non supportato: " + qualifiedName);
+            }
+            TeaVmFunction supported = null;
+            for (TeaVmFunction candidate : TeaVmFunction.values()) {
+                if (candidate.importName.equals(imported.name())) {
+                    supported = candidate;
+                    break;
+                }
+            }
+            if (supported == null) {
+                throw new PluginExecutionException(PluginExecutionException.Kind.INVALID_MODULE,
+                        "Import WASM non supportato: " + qualifiedName);
+            }
+            if (!supported.type.equals(module.typeSection().getType(function.typeIndex()))) {
+                throw new PluginExecutionException(PluginExecutionException.Kind.INVALID_MODULE,
+                        "Firma WASM non valida per l'import: " + qualifiedName);
+            }
+            functions.add(supported);
+        }
+        return List.copyOf(functions);
+    }
+
+    private static ImportValues createImportValues(List<TeaVmFunction> functions) {
+        var imports = ImportValues.builder();
+        AtomicInteger logCount = new AtomicInteger();
+        for (TeaVmFunction function : functions) {
+            imports.addFunction(new HostFunction("teavm", function.importName, function.type,
+                    (instance, args) -> {
+                        switch (function) {
+                            case CURRENT_TIME_MILLIS:
+                                // TeaVM's JavaScript host returns milliseconds as an f64.
+                                return new long[] {Value.doubleToLong(System.currentTimeMillis())};
+                            case LOG_STRING:
+                                if (logCount.getAndIncrement() < MAX_PLUGIN_LOGS) {
+                                    LOG.debug("TeaVM: {}", readTeaVmString(instance, (int) args[0])
+                                            .replaceAll("[\\r\\n]+", " "));
+                                }
+                                break;
+                            case LOG_INT:
+                                if (logCount.getAndIncrement() < MAX_PLUGIN_LOGS) {
+                                    LOG.debug("TeaVM: {}", (int) args[0]);
+                                }
+                                break;
+                            case LOG_OUT_OF_MEMORY:
+                                throw new PluginExecutionException(PluginExecutionException.Kind.TRAP,
+                                        "Memoria esaurita nel runtime TeaVM");
+                        }
+                        return Value.EMPTY_VALUES;
+                    }));
+        }
+        return imports.build();
+    }
+
+    private static String readTeaVmString(Instance instance, int stringPointer) {
+        long arrayPointer = instance.export("teavm_stringData").apply(stringPointer)[0];
+        long length = instance.export("teavm_arrayLength").apply(arrayPointer)[0] & 0xFFFFFFFFL;
+        long dataPointer = instance.export("teavm_charArrayData").apply(arrayPointer)[0] & 0xFFFFFFFFL;
+        int pointer = checkedMemoryRange(
+                dataPointer, length * Character.BYTES, instance.memory(), "stringa TeaVM");
+        int bytesToRead = (int) Math.min(length, MAX_PLUGIN_LOG_LENGTH) * Character.BYTES;
+        return new String(instance.memory().readBytes(pointer, bytesToRead), StandardCharsets.UTF_16LE);
     }
 
     private byte[] serializeRequest(JsonNode input) {
-        PluginEnvelope.Request request = new PluginEnvelope.Request(
-                PluginEnvelope.ABI_VERSION, System.currentTimeMillis(), input);
         try {
-            return objectMapper.writeValueAsBytes(request);
+            return objectMapper.writeValueAsBytes(input);
         } catch (IOException e) {
             throw new PluginExecutionException(PluginExecutionException.Kind.INVALID_INPUT,
                     "Input non serializzabile in JSON", e);
         }
     }
 
-    private byte[] executeIsolated(WasmModule module, String methodName, byte[] inputBytes,
+    private byte[] executeIsolated(ExecutableModule module, String methodName, byte[] inputBytes,
             CircuitBreaker breaker) {
         Future<byte[]> future;
         try {
@@ -248,8 +344,10 @@ public class WasmExecutorService {
         }
     }
 
-    private byte[] invoke(WasmModule module, String methodName, byte[] inputBytes) {
+    private byte[] invoke(ExecutableModule executable, String methodName, byte[] inputBytes) {
+        WasmModule module = executable.validated().module();
         Instance instance = Instance.builder(module)
+                .withImportValues(createImportValues(executable.imports()))
                 .withMemoryLimits(WasmPluginValidator.memoryLimits(module, MAX_MEMORY_PAGES))
                 .build();
         long[] allocation = instance.export("alloc").apply(inputBytes.length);
@@ -277,10 +375,9 @@ public class WasmExecutorService {
         return memory.readBytes(checkedOutputPointer, (int) outputLength);
     }
 
-    private JsonNode parseResponse(byte[] bytes, String pluginName, CircuitBreaker breaker) {
-        JsonNode output;
+    private JsonNode parseResponse(byte[] bytes, CircuitBreaker breaker) {
         try {
-            output = objectMapper.reader()
+            return objectMapper.reader()
                     .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                     .readTree(bytes);
         } catch (IOException e) {
@@ -288,34 +385,6 @@ public class WasmExecutorService {
             throw new PluginExecutionException(PluginExecutionException.Kind.CONTRACT_VIOLATION,
                     "L'output del plugin non è JSON valido", e);
         }
-        if (output == null || !output.isObject()) {
-            breaker.recordFailure();
-            throw contractViolation("La risposta del plugin deve essere un oggetto JSON");
-        }
-
-        PluginEnvelope.Response response;
-        try {
-            response = objectMapper.treeToValue(output, PluginEnvelope.Response.class);
-        } catch (IOException e) {
-            breaker.recordFailure();
-            throw new PluginExecutionException(PluginExecutionException.Kind.CONTRACT_VIOLATION,
-                    "L'output del plugin non rispetta il contratto JSON", e);
-        }
-        if (response.abiVersion() != PluginEnvelope.ABI_VERSION) {
-            breaker.recordFailure();
-            throw contractViolation("Versione del contratto nella risposta non valida");
-        }
-        logPluginMessages(pluginName, response.logs());
-        if (response.error() != null && !response.error().isBlank()) {
-            breaker.recordSuccess();
-            throw new PluginExecutionException(PluginExecutionException.Kind.PLUGIN_ERROR,
-                    truncate(response.error()));
-        }
-        if (response.result() == null) {
-            breaker.recordFailure();
-            throw contractViolation("La risposta deve contenere 'result' oppure 'error'");
-        }
-        return response.result();
     }
 
     private static int checkedMemoryRange(long pointer, long length, Memory memory, String label) {
