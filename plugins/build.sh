@@ -2,27 +2,11 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source="$root/plugins/src/main/c/arithmetic_plugin.c"
-target="$root/plugins/target"
-fixtures="$root/src/test/resources/wasm"
 
-mkdir -p "$target" "$fixtures"
+sh "$root/plugins/c/build.sh"
+"$root/mvnw" -f "$root/plugins/teavm/pom.xml" package
 
-for operation in multiply sum diff; do
-    case "$operation" in
-        multiply) operation_id=0 ;;
-        sum) operation_id=1 ;;
-        diff) operation_id=2 ;;
-    esac
-    clang --target=wasm32-unknown-unknown -O2 -nostdlib "$source" \
-        -Wl,--no-entry \
-        -Wl,--export-memory \
-        -Wl,--export=alloc \
-        -Wl,--export="$operation" \
-        -Wl,--initial-memory=1310720 \
-        -Wl,--max-memory=16777216 \
-        -Wl,--strip-all \
-        -DPLUGIN_OPERATION="$operation_id" \
-        -o "$target/$operation.wasm"
-    cp "$target/$operation.wasm" "$fixtures/$operation.wasm"
-done
+mkdir -p "$root/plugins/target/teavm"
+cp "$root/plugins/teavm/target/multiply.wasm" "$root/plugins/target/teavm/multiply.wasm"
+cp "$root/plugins/teavm/target/sum.wasm" "$root/plugins/target/teavm/sum.wasm"
+cp "$root/plugins/teavm/target/diff.wasm" "$root/plugins/target/teavm/diff.wasm"
